@@ -264,6 +264,13 @@ with col2:
 
 st.markdown("---")
 st.subheader("Blues I-IV-V helper")
+st.markdown("**Quick notes**")
+st.write(
+    "- **I7, IV7, V7** are the 3 core chords in a 12-bar blues.\n"
+    "- **Function** shows where each chord sits in the key (home, away, tension).\n"
+    "- **Guide tones (3 and b7)** define the chord sound and connect smoothly between changes.\n"
+    "- Practice idea: target only 3 and b7 on each change, then add root and 5th."
+)
 key_label = st.selectbox("12-bar blues key", [label for label, _ in ROOT_OPTIONS], index=7)
 key_pc = dict(ROOT_OPTIONS)[key_label]
 key_spelling = parse_root_label(key_label)
