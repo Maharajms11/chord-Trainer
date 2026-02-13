@@ -7,7 +7,15 @@ import streamlit as st
 
 st.set_page_config(page_title="Guitar Chord Tone Trainer", layout="wide")
 
-NOTE_LABELS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+NOTE_LABELS_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+NOTE_LABELS_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+QUIZ_NOTE_OPTIONS = sorted(
+    set(
+        NOTE_LABELS_SHARP
+        + NOTE_LABELS_FLAT
+        + ["Cb", "E#", "Fb", "B#", "C##", "F##", "G##", "D##", "A##"]
+    )
+)
 ROOT_OPTIONS = [
     ("C", 0),
     ("C#/Db", 1),
@@ -26,6 +34,26 @@ ROOT_OPTIONS = [
 # Standard tuning: low E to high E.
 STRING_OPEN_PCS = [4, 9, 2, 7, 11, 4]
 STRING_LABELS = ["6 (E)", "5 (A)", "4 (D)", "3 (G)", "2 (B)", "1 (e)"]
+
+LETTERS = ["C", "D", "E", "F", "G", "A", "B"]
+NATURAL_PCS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+DEGREE_TO_STEP = {
+    "1": 0,
+    "2": 1,
+    "b3": 2,
+    "3": 2,
+    "4": 3,
+    "b5": 4,
+    "5": 4,
+    "#5": 4,
+    "b7": 6,
+    "bb7": 6,
+    "7": 6,
+    "9": 1,
+    "#9": 1,
+    "13": 5,
+}
+OFFSET_TO_ACCIDENTAL = {-2: "bb", -1: "b", 0: "", 1: "#", 2: "##"}
 
 CHORDS: Dict[str, Dict[str, object]] = {
     "Major": {"intervals": [0, 4, 7], "degrees": ["1", "3", "5"], "group": "Common"},
@@ -62,31 +90,61 @@ DEGREE_COLORS = {
 }
 
 
-def pc_to_note(pc: int) -> str:
-    return NOTE_LABELS[pc % 12]
+def parse_root_label(root_label: str) -> str:
+    if "/" in root_label:
+        return root_label.split("/")[1]
+    return root_label
 
 
-def build_chord(root_pc: int, chord_name: str) -> List[Tuple[str, str]]:
+def pc_to_note(pc: int, prefer_flats: bool = False) -> str:
+    labels = NOTE_LABELS_FLAT if prefer_flats else NOTE_LABELS_SHARP
+    return labels[pc % 12]
+
+
+def spell_chord_tone(root_spelling: str, root_pc: int, semis: int, degree: str) -> str:
+    root_letter = root_spelling[0]
+    root_idx = LETTERS.index(root_letter)
+    step = DEGREE_TO_STEP[degree]
+    target_letter = LETTERS[(root_idx + step) % 7]
+
+    desired_pc = (root_pc + semis) % 12
+    target_natural_pc = NATURAL_PCS[target_letter]
+    delta = (desired_pc - target_natural_pc + 12) % 12
+    if delta > 6:
+        delta -= 12
+
+    accidental = OFFSET_TO_ACCIDENTAL.get(delta)
+    if accidental is None:
+        return pc_to_note(desired_pc, prefer_flats=("b" in root_spelling))
+    return f"{target_letter}{accidental}"
+
+
+def build_chord(root_pc: int, chord_name: str, root_spelling: str) -> List[Dict[str, object]]:
     data = CHORDS[chord_name]
     intervals = data["intervals"]
     degrees = data["degrees"]
     tones = []
     for semis, degree in zip(intervals, degrees):
-        tones.append((pc_to_note(root_pc + semis), degree))
+        tones.append(
+            {
+                "note": spell_chord_tone(root_spelling, root_pc, semis, degree),
+                "degree": degree,
+                "pc": (root_pc + semis) % 12,
+            }
+        )
     return tones
 
 
-def build_fretboard_df(root_pc: int, chord_name: str, max_fret: int) -> pd.DataFrame:
-    tones = build_chord(root_pc, chord_name)
-    tone_map = {note: degree for note, degree in tones}
-    chord_notes = set(tone_map.keys())
+def build_fretboard_df(root_pc: int, chord_name: str, root_spelling: str, max_fret: int) -> pd.DataFrame:
+    tones = build_chord(root_pc, chord_name, root_spelling)
+    tone_map = {tone["pc"]: (tone["note"], tone["degree"]) for tone in tones}
 
     rows = []
     for string_idx, open_pc in enumerate(STRING_OPEN_PCS):
         for fret in range(max_fret + 1):
-            note = pc_to_note(open_pc + fret)
-            if note in chord_notes:
-                degree = tone_map[note]
+            fret_pc = (open_pc + fret) % 12
+            if fret_pc in tone_map:
+                note, degree = tone_map[fret_pc]
                 rows.append(
                     {
                         "string": string_idx + 1,
@@ -141,16 +199,20 @@ def fretboard_chart(df: pd.DataFrame, max_fret: int) -> go.Figure:
 def random_quiz_question(pool: List[str]) -> Dict[str, object]:
     chord_name = random.choice(pool)
     root_label, root_pc = random.choice(ROOT_OPTIONS)
-    tones = build_chord(root_pc, chord_name)
-    target_note, target_degree = random.choice(tones)
+    root_spelling = parse_root_label(root_label)
 
-    distractors = [n for n in NOTE_LABELS if n != target_note]
+    tones = build_chord(root_pc, chord_name, root_spelling)
+    target = random.choice(tones)
+    target_note = target["note"]
+    target_degree = target["degree"]
+
+    distractors = [n for n in QUIZ_NOTE_OPTIONS if n != target_note]
     options = random.sample(distractors, 3) + [target_note]
     random.shuffle(options)
 
     return {
         "chord_name": chord_name,
-        "root_label": root_label,
+        "root_label": root_spelling,
         "root_pc": root_pc,
         "target_degree": target_degree,
         "correct_note": target_note,
@@ -167,27 +229,30 @@ with st.sidebar:
     st.header("Practice setup")
     root_label = st.selectbox("Root note", [label for label, _ in ROOT_OPTIONS], index=0)
     root_pc = dict(ROOT_OPTIONS)[root_label]
+    root_spelling = parse_root_label(root_label)
 
     chord_names = list(CHORDS.keys())
     default_chord = chord_names.index("Dominant 7") if "Dominant 7" in chord_names else 0
     chord_name = st.selectbox("Chord quality", chord_names, index=default_chord)
     max_fret = st.slider("Show frets 0 to", min_value=5, max_value=18, value=12)
 
-chord_tones = build_chord(root_pc, chord_name)
-chord_formula = " - ".join([f"{degree} ({note})" for note, degree in chord_tones])
+chord_tones = build_chord(root_pc, chord_name, root_spelling)
+chord_formula = " - ".join([f"{tone['degree']} ({tone['note']})" for tone in chord_tones])
 
 col1, col2 = st.columns([2, 1])
 with col1:
-    st.subheader(f"{root_label} {chord_name}")
+    st.subheader(f"{root_spelling} {chord_name}")
     st.write(f"Chord formula: **{chord_formula}**")
 
-    fret_df = build_fretboard_df(root_pc, chord_name, max_fret)
+    fret_df = build_fretboard_df(root_pc, chord_name, root_spelling, max_fret)
     chart = fretboard_chart(fret_df, max_fret)
     st.plotly_chart(chart, use_container_width=True)
 
 with col2:
     st.subheader("Tone Targets")
-    tone_table = pd.DataFrame(chord_tones, columns=["Note", "Degree"])
+    tone_table = pd.DataFrame(
+        [{"Note": tone["note"], "Degree": tone["degree"]} for tone in chord_tones]
+    )
     st.dataframe(tone_table, hide_index=True, use_container_width=True)
 
     st.markdown("**How to practice**")
@@ -201,17 +266,26 @@ st.markdown("---")
 st.subheader("Blues I-IV-V helper")
 key_label = st.selectbox("12-bar blues key", [label for label, _ in ROOT_OPTIONS], index=7)
 key_pc = dict(ROOT_OPTIONS)[key_label]
+key_spelling = parse_root_label(key_label)
+prefer_flats = "b" in key_spelling and "#" not in key_spelling
 
 blues_roots = [("I7", key_pc), ("IV7", (key_pc + 5) % 12), ("V7", (key_pc + 7) % 12)]
 blues_rows = []
 for func, pc in blues_roots:
-    tones = build_chord(pc, "Dominant 7")
+    chord_root = pc_to_note(pc, prefer_flats=prefer_flats)
+    tones = build_chord(pc, "Dominant 7", chord_root)
     blues_rows.append(
         {
-            "Chord": f"{pc_to_note(pc)}7",
+            "Chord": f"{chord_root}7",
             "Function": func,
-            "Chord tones": ", ".join([f"{note} ({deg})" for note, deg in tones]),
-            "Guide tones": ", ".join([f"{note} ({deg})" for note, deg in tones if deg in {"3", "b7"}]),
+            "Chord tones": ", ".join([f"{tone['note']} ({tone['degree']})" for tone in tones]),
+            "Guide tones": ", ".join(
+                [
+                    f"{tone['note']} ({tone['degree']})"
+                    for tone in tones
+                    if tone["degree"] in {"3", "b7"}
+                ]
+            ),
         }
     )
 
@@ -254,9 +328,7 @@ if st.button("New question"):
     st.session_state.pop("quiz_answer", None)
 
 q = st.session_state.quiz_question
-st.write(
-    f"In **{q['root_label']} {q['chord_name']}**, which note is the **{q['target_degree']}**?"
-)
+st.write(f"In **{q['root_label']} {q['chord_name']}**, which note is the **{q['target_degree']}**?")
 answer = st.radio("Choose one", q["options"], key="quiz_answer")
 
 if st.button("Check answer"):
@@ -276,6 +348,4 @@ c1.metric("Correct", correct)
 c2.metric("Attempts", attempts)
 c3.metric("Accuracy", f"{accuracy:.0%}")
 
-st.caption(
-    "Tip: if you play blues, drill Dominant 7, Dominant 9, and 7#9 first in every key."
-)
+st.caption("Tip: if you play blues, drill Dominant 7, Dominant 9, and 7#9 first in every key.")
