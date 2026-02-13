@@ -130,7 +130,6 @@ def fretboard_chart(df: pd.DataFrame, max_fret: int) -> go.Figure:
             tickmode="array",
             tickvals=[1, 2, 3, 4, 5, 6],
             ticktext=STRING_LABELS,
-            autorange="reversed",
         ),
         legend_title="Degree",
         margin=dict(l=20, r=20, t=40, b=20),
